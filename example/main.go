@@ -38,12 +38,13 @@ var (
 	flags = flag.NewFlagSet(
 		`elector --election=<name>`,
 		flag.ExitOnError)
-	name      = flags.String("election", "", "The name of the election")
-	id        = flags.String("id", "", "The id of this participant")
-	namespace = flags.String("election-namespace", api.NamespaceDefault, "The Kubernetes namespace for this election")
-	ttl       = flags.Duration("ttl", 10*time.Second, "The TTL for this election")
-	inCluster = flags.Bool("use-cluster-credentials", false, "Should this request use cluster credentials?")
-	addr      = flags.String("http", "", "If non-empty, stand up a simple webserver that reports the leader state")
+	name         = flags.String("election", "", "The name of the election")
+	id           = flags.String("id", "", "The id of this participant")
+	namespace    = flags.String("election-namespace", api.NamespaceDefault, "The Kubernetes namespace for this election")
+	ttl          = flags.Duration("ttl", 10*time.Second, "The TTL for this election")
+	inCluster    = flags.Bool("use-cluster-credentials", false, "Should this request use cluster credentials?")
+	resolvePodID = flags.Bool("resolve-pod-ip", false, "Use participant ID as Pod name and resolve Pod IP of the elected leader")
+	addr         = flags.String("http", "", "If non-empty, stand up a simple webserver that reports the leader state")
 
 	mu     sync.Mutex
 	leader = &LeaderData{}
@@ -70,6 +71,7 @@ func makeClient() (*client.Client, error) {
 type LeaderData struct {
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
+	PodIP     string `json:"podIP,omitempty"`
 }
 
 func webHandler(res http.ResponseWriter, req *http.Request) {
@@ -105,9 +107,20 @@ func main() {
 	}
 
 	fn := func(str string) {
+		fmt.Printf("%s is the leader\n", str)
+		var podIP string
+		if *resolvePodID {
+			pod, err := kubeClient.Pods(*namespace).Get(str)
+			if err != nil {
+				glog.Errorf("failed to get Pod %s: %v", str, err)
+			} else {
+				podIP = pod.Status.PodIP
+			}
+		}
+
 		mu.Lock()
 		leader.Name = str
-		fmt.Printf("%s is the leader\n", leader.Name)
+		leader.PodIP = podIP
 		mu.Unlock()
 	}
 
