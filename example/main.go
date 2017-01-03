@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	election "k8s.io/contrib/election/lib"
@@ -44,6 +45,7 @@ var (
 	inCluster = flags.Bool("use-cluster-credentials", false, "Should this request use cluster credentials?")
 	addr      = flags.String("http", "", "If non-empty, stand up a simple webserver that reports the leader state")
 
+	mu     sync.Mutex
 	leader = &LeaderData{}
 )
 
@@ -66,11 +68,14 @@ func makeClient() (*client.Client, error) {
 
 // LeaderData represents information about the current leader
 type LeaderData struct {
-	Name string `json:"name"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 }
 
 func webHandler(res http.ResponseWriter, req *http.Request) {
+	mu.Lock()
 	data, err := json.Marshal(leader)
+	mu.Unlock()
 	if err != nil {
 		res.WriteHeader(http.StatusInternalServerError)
 		res.Write([]byte(err.Error()))
@@ -92,6 +97,7 @@ func validateFlags() {
 func main() {
 	flags.Parse(os.Args)
 	validateFlags()
+	leader.Namespace = *namespace
 
 	kubeClient, err := makeClient()
 	if err != nil {
@@ -99,8 +105,10 @@ func main() {
 	}
 
 	fn := func(str string) {
+		mu.Lock()
 		leader.Name = str
 		fmt.Printf("%s is the leader\n", leader.Name)
+		mu.Unlock()
 	}
 
 	e, err := election.NewElection(*name, *id, *namespace, *ttl, fn, kubeClient)
