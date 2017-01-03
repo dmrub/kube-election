@@ -18,6 +18,7 @@ package lib
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"time"
 
@@ -105,6 +106,10 @@ func NewElection(electionId, id, namespace string, ttl time.Duration, callback f
 				return
 			}
 			callback(leader)
+		},
+		OnNewLeader: func(identity string) {
+			fmt.Printf("OnNewLeader: %s is the leader\n", identity)
+			callback(identity)
 		},
 	}
 
