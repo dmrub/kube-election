@@ -3,13 +3,13 @@
 THIS_DIR="$(dirname "$(readlink -f "$BASH_SOURCE")")"
 
 cleanup() {
-    docker rm leader-elector-data
+    docker rm leader-elector-data >/dev/null 2>&1
 }
 
 trap cleanup INT EXIT
 
 if [ "$1" == "--dind" ]; then
-    docker rm leader-elector-data || /bin/true
+    docker rm leader-elector-data >/dev/null 2>&1 || /bin/true
     docker create -v /go/src/k8s.io/contrib/election --name leader-elector-data golang:1.6 /bin/true && \
         docker cp "$THIS_DIR/." leader-elector-data:/go/src/k8s.io/contrib/election && \
         docker run --rm --volumes-from leader-elector-data -w /go/src/k8s.io/contrib/election golang:1.6 \
