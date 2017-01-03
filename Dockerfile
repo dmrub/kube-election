@@ -23,6 +23,7 @@ RUN \
   apt-get install -y ca-certificates && \
   rm -rf /var/lib/apt/lists/*
 
-ADD server server
+ADD server /server
 ADD run.sh /run.sh
+RUN chmod +x /server /run.sh
 ENTRYPOINT ["/run.sh"]
