@@ -46,9 +46,27 @@ var (
 	resolvePodID = flags.Bool("resolve-pod-ip", false, "Use participant ID as Pod name and resolve Pod IP of the elected leader")
 	addr         = flags.String("http", "", "If non-empty, stand up a simple webserver that reports the leader state")
 
-	mu     sync.Mutex
-	leader = &LeaderData{}
+	mu          sync.Mutex
+	leader      = &LeaderData{}
+	kubeClient2 *client.Client
 )
+
+func makeConfig() (*restclient.Config, error) {
+	var cfg *restclient.Config
+	var err error
+
+	if *inCluster {
+		if cfg, err = restclient.InClusterConfig(); err != nil {
+			return nil, err
+		}
+	} else {
+		clientConfig := kubectl_util.DefaultClientConfig(flags)
+		if cfg, err = clientConfig.ClientConfig(); err != nil {
+			return nil, err
+		}
+	}
+	return cfg, nil
+}
 
 func makeClient() (*client.Client, error) {
 	var cfg *restclient.Config
@@ -76,6 +94,14 @@ type LeaderData struct {
 
 func webHandler(res http.ResponseWriter, req *http.Request) {
 	mu.Lock()
+	if *resolvePodID && len(leader.PodIP) == 0 {
+		pod, err := kubeClient2.Pods(*namespace).Get(leader.Name)
+		if err != nil {
+			glog.Errorf("failed to get Pod %s: %v", leader.Name, err)
+		} else {
+			leader.PodIP = pod.Status.PodIP
+		}
+	}
 	data, err := json.Marshal(leader)
 	mu.Unlock()
 	if err != nil {
@@ -101,26 +127,26 @@ func main() {
 	validateFlags()
 	leader.Namespace = *namespace
 
-	kubeClient, err := makeClient()
+	kubeConfig, err := makeConfig()
+	if err != nil {
+		glog.Fatalf("error making Kubernetes configuration: %v", err)
+	}
+
+	kubeClient, err := client.New(kubeConfig)
+	if err != nil {
+		glog.Fatalf("error connecting to the client: %v", err)
+	}
+
+	kubeClient2, err = client.New(kubeConfig)
 	if err != nil {
 		glog.Fatalf("error connecting to the client: %v", err)
 	}
 
 	fn := func(str string) {
 		fmt.Printf("%s is the leader\n", str)
-		var podIP string
-		if *resolvePodID {
-			pod, err := kubeClient.Pods(*namespace).Get(str)
-			if err != nil {
-				glog.Errorf("failed to get Pod %s: %v", str, err)
-			} else {
-				podIP = pod.Status.PodIP
-			}
-		}
-
 		mu.Lock()
 		leader.Name = str
-		leader.PodIP = podIP
+		leader.PodIP = ""
 		mu.Unlock()
 	}
 
