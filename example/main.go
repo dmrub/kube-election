@@ -38,13 +38,14 @@ var (
 	flags = flag.NewFlagSet(
 		`elector --election=<name>`,
 		flag.ExitOnError)
-	name         = flags.String("election", "", "The name of the election")
-	id           = flags.String("id", "", "The id of this participant")
-	namespace    = flags.String("election-namespace", api.NamespaceDefault, "The Kubernetes namespace for this election")
-	ttl          = flags.Duration("ttl", 10*time.Second, "The TTL for this election")
-	inCluster    = flags.Bool("use-cluster-credentials", false, "Should this request use cluster credentials?")
-	resolvePodID = flags.Bool("resolve-pod-ip", false, "Use participant ID as Pod name and resolve Pod IP of the elected leader")
-	addr         = flags.String("http", "", "If non-empty, stand up a simple webserver that reports the leader state")
+	name             = flags.String("election", "", "The name of the election")
+	id               = flags.String("id", "", "The id of this participant")
+	namespace        = flags.String("election-namespace", api.NamespaceDefault, "The Kubernetes namespace for this election")
+	ttl              = flags.Duration("ttl", 10*time.Second, "The TTL for this election")
+	inCluster        = flags.Bool("use-cluster-credentials", false, "Should this request use cluster credentials?")
+	resolvePodID     = flags.Bool("resolve-pod-ip", false, "Use participant ID as Pod name and resolve Pod IP of the elected leader")
+	resolveEndpoints = flags.Bool("resolve-endpoints", false, "Resolve names and IP addresses of endpoints")
+	addr             = flags.String("http", "", "If non-empty, stand up a simple webserver that reports the leader state")
 
 	mu          sync.Mutex
 	leader      = &LeaderData{}
@@ -85,11 +86,18 @@ func makeClient() (*client.Client, error) {
 	return client.New(cfg)
 }
 
+// EndpointData represents endpoint information
+type EndpointData struct {
+	Name string `json:"name"`
+	IP   string `json:"ip"`
+}
+
 // LeaderData represents information about the current leader
 type LeaderData struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace"`
-	PodIP     string `json:"podIP,omitempty"`
+	Name      string         `json:"name"`
+	Namespace string         `json:"namespace"`
+	PodIP     string         `json:"podIP,omitempty"`
+	Endpoints []EndpointData `json:"endpoints,omitempty"`
 }
 
 func webHandler(res http.ResponseWriter, req *http.Request) {
@@ -100,6 +108,22 @@ func webHandler(res http.ResponseWriter, req *http.Request) {
 			glog.Errorf("failed to get Pod %s: %v", leader.Name, err)
 		} else {
 			leader.PodIP = pod.Status.PodIP
+		}
+	}
+	if *resolveEndpoints && len(leader.Endpoints) == 0 {
+		endpoints, err := kubeClient2.Endpoints(*namespace).Get(*name)
+		if err != nil {
+			glog.Errorf("failed to get Endpoints %s: %v", *name, err)
+		} else {
+			for _, subset := range endpoints.Subsets {
+				for _, address := range subset.Addresses {
+					leaderEndpoint := EndpointData{IP: address.IP}
+					if address.TargetRef != nil {
+						leaderEndpoint.Name = address.TargetRef.Name
+					}
+					leader.Endpoints = append(leader.Endpoints, leaderEndpoint)
+				}
+			}
 		}
 	}
 	data, err := json.Marshal(leader)
@@ -147,6 +171,7 @@ func main() {
 		mu.Lock()
 		leader.Name = str
 		leader.PodIP = ""
+		leader.Endpoints = leader.Endpoints[:0]
 		mu.Unlock()
 	}
 
